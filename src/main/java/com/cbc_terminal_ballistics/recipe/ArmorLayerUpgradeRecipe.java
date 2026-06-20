@@ -5,10 +5,12 @@ import com.cbc_terminal_ballistics.armor.FramedCollapsibleCopycatArmorItem;
 import com.cbc_terminal_ballistics.registry.ModItems;
 import com.cbc_terminal_ballistics.registry.ModRecipeSerializers;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.NonNullList;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingBookCategory;
 import net.minecraft.world.item.crafting.CraftingInput;
 import net.minecraft.world.item.crafting.CustomRecipe;
+import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.item.crafting.RecipeSerializer;
 import net.minecraft.world.level.Level;
 
@@ -104,6 +106,20 @@ public class ArmorLayerUpgradeRecipe extends CustomRecipe {
     @Override
     public boolean canCraftInDimensions(int width, int height) {
         return width * height >= 2;
+    }
+
+    @Override
+    public NonNullList<Ingredient> getIngredients() {
+        NonNullList<Ingredient> ingredients = NonNullList.withSize(9, Ingredient.EMPTY);
+        ingredients.set(0, Ingredient.of(ModItems.COPYCAT_ARMOR_LAYER.get(),
+                ModItems.FRAMED_COLLAPSIBLE_COPYCAT_ARMOR.get()));
+        ingredients.set(4, Ingredient.of(ModItems.ARMOR_UPGRADER.get()));
+        return ingredients;
+    }
+
+    @Override
+    public ItemStack getResultItem(HolderLookup.Provider registries) {
+        return new ItemStack(ModItems.COPYCAT_ARMOR_LAYER.get());
     }
 
     @Override

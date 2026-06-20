@@ -39,8 +39,10 @@ import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.minecraft.core.registries.BuiltInRegistries;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public final class TBImpactService {
@@ -491,11 +493,16 @@ public final class TBImpactService {
         double coneAngleDeg = Mth.lerp(combined, minAngle, maxAngle);
         double coneCos = Math.cos(Math.toRadians(coneAngleDeg));
         
-        AABB box = new AABB(origin, origin.add(dir.scale(range))).inflate(range * 0.55 + 1.0);
+        boolean subLevelSpall = SableCompat.isInSubLevel(level, BlockPos.containing(origin));
+        Vec3 entityOrigin = subLevelSpall ? SableCompat.toWorldCoordinates(level, origin) : origin;
+        Vec3 entityForward = subLevelSpall ? SableCompat.toWorldCoordinates(level, origin.add(dir)).subtract(entityOrigin) : dir;
+        if (entityForward.lengthSqr() < 1.0e-6D) entityForward = dir;
+        entityForward = entityForward.normalize();
+        AABB box = new AABB(entityOrigin, entityOrigin.add(entityForward.scale(range))).inflate(range * 0.55 + 1.0);
         Entity owner = projectile instanceof Projectile proj ? proj.getOwner() : null;
         double damageModifier = ProjectileClassifier.shellSpallDamageModifier(projectile);
 
-        java.util.List<LivingEntity> candidates = level.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e != owner);
+        java.util.List<LivingEntity> candidates = spallEntityCandidates(level, box, owner, subLevelSpall);
         Map<LivingEntity, Integer> rayHits = new HashMap<>();
         double spallToughnessThreshold = TBConfig.SPALL_INTEGRITY_DAMAGE_TOUGHNESS_THRESHOLD.get();
         double spallDamageScale = TBConfig.SPALL_INTEGRITY_DAMAGE_SCALE.get();
@@ -507,6 +514,10 @@ public final class TBImpactService {
             Vec3 end = origin.add(fragDir.scale(range));
             HitResult blockRay = level.clip(new ClipContext(origin, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, projectile));
             double blockDistSqr = blockRay.getType() == HitResult.Type.MISS ? Double.POSITIVE_INFINITY : blockRay.getLocation().distanceToSqr(origin);
+            Vec3 entityEnd = subLevelSpall ? SableCompat.toWorldCoordinates(level, end) : end;
+            double entityBlockDistSqr = blockRay.getType() == HitResult.Type.MISS
+                ? Double.POSITIVE_INFINITY
+                : (subLevelSpall ? SableCompat.toWorldCoordinates(level, blockRay.getLocation()) : blockRay.getLocation()).distanceToSqr(entityOrigin);
             if (!visualOriginInsideArmor) {
                 double visualClearance = blockRay.getType() == HitResult.Type.MISS ? range : Math.sqrt(blockDistSqr);
                 if (visualClearance >= MIN_SPALL_VISUAL_CLEARANCE) {
@@ -516,8 +527,8 @@ public final class TBImpactService {
             }
 
             for (LivingEntity entity : candidates) {
-                java.util.Optional<Vec3> hitPoint = entity.getBoundingBox().inflate(0.18).clip(origin, end);
-                if (hitPoint.isPresent() && hitPoint.get().distanceToSqr(origin) + 0.04 < blockDistSqr) {
+                java.util.Optional<Vec3> hitPoint = entity.getBoundingBox().inflate(0.18).clip(entityOrigin, entityEnd);
+                if (hitPoint.isPresent() && hitPoint.get().distanceToSqr(entityOrigin) + 0.04 < entityBlockDistSqr) {
                     rayHits.merge(entity, 1, Integer::sum);
                 }
             }
@@ -526,6 +537,7 @@ public final class TBImpactService {
                 BlockPos bp = bhr.getBlockPos();
                 BlockState st = level.getBlockState(bp);
                 if (st.isAir()) continue;
+                if (triggerExplosiveSpallHit(level, bp, st, bhr.getDirection())) continue;
                 float speed = st.getDestroySpeed(level, bp);
                 if (speed < 0) continue;
                 double localArmor = localEffectiveToughness(level, st, bp);
@@ -554,18 +566,74 @@ public final class TBImpactService {
         }
 
         for (LivingEntity entity : candidates) {
-            Vec3 to = entity.getEyePosition().subtract(origin);
+            Vec3 to = entity.getEyePosition().subtract(entityOrigin);
             double dist = Math.max(0.5, to.length());
-            double cone = to.normalize().dot(dir);
+            if (dist > range + 1.0D) continue;
+            double cone = to.normalize().dot(entityForward);
             if (cone < coneCos) continue;
-            HitResult occlusion = level.clip(new ClipContext(origin, entity.getEyePosition(), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, projectile));
-            if (occlusion.getType() != HitResult.Type.MISS && occlusion.getLocation().distanceToSqr(origin) + 0.25 < entity.getEyePosition().distanceToSqr(origin)) continue;
             int directHits = rayHits.getOrDefault(entity, 0);
+            if (subLevelSpall) {
+                if (directHits <= 0 && cone < 0.92D) continue;
+            } else {
+                HitResult occlusion = level.clip(new ClipContext(origin, entity.getEyePosition(), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, projectile));
+                if (occlusion.getType() != HitResult.Type.MISS && occlusion.getLocation().distanceToSqr(origin) + 0.25 < entity.getEyePosition().distanceToSqr(origin)) continue;
+            }
             double coneStrength = cone * cone;
             float damage = (float) (Mth.clamp((massRatio * 15.0 + fragments * 1.15) * coneStrength / Math.sqrt(dist) + directHits * 3.5, 4.0, 48.0) * damageModifier);
-            entity.hurt(level.damageSources().generic(), damage);
+            entity.hurt(entity.level().damageSources().generic(), damage);
         }
         return fragments;
+    }
+
+    private static boolean triggerExplosiveSpallHit(ServerLevel level, BlockPos pos, BlockState state, Direction hitFace) {
+        if (state.is(Blocks.TNT)) {
+            Vec3 center = Vec3.atCenterOf(pos);
+            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            level.explode(null, center.x, center.y, center.z, 4.0F, Level.ExplosionInteraction.TNT);
+            clearMarks(level, pos);
+            return true;
+        }
+
+        if (!isCbcHighExplosiveMunition(state)) {
+            return false;
+        }
+
+        if (CBCReflect.detonateCbcProjectileBlock(level, pos, state, hitFace)) {
+            clearMarks(level, pos);
+            return true;
+        }
+
+        Vec3 center = Vec3.atCenterOf(pos);
+        level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+        level.explode(null, center.x, center.y, center.z, 5.0F, Level.ExplosionInteraction.TNT);
+        clearMarks(level, pos);
+        return true;
+    }
+
+    private static boolean isCbcHighExplosiveMunition(BlockState state) {
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        if (id == null) return false;
+        String namespace = id.getNamespace();
+        String path = id.getPath().toLowerCase(Locale.ROOT);
+        if (!namespace.equals("createbigcannons") && !namespace.contains("cbc")) {
+            return false;
+        }
+        return path.equals("he_shell")
+                || path.contains("he_shell")
+                || path.contains("high_explosive")
+                || path.contains("high_explosive_shell");
+    }
+
+    private static List<LivingEntity> spallEntityCandidates(ServerLevel level, AABB box, Entity owner, boolean subLevelSpall) {
+        if (!subLevelSpall) {
+            return level.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e != owner);
+        }
+
+        List<LivingEntity> candidates = new ArrayList<>();
+        for (ServerLevel candidateLevel : level.getServer().getAllLevels()) {
+            candidates.addAll(candidateLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e != owner));
+        }
+        return candidates;
     }
 
     private static boolean isCatchingArmorAt(ServerLevel level, Vec3 pos) {

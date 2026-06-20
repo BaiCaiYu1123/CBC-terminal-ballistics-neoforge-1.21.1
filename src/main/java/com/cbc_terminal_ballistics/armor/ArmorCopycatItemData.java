@@ -8,6 +8,7 @@ import net.minecraft.nbt.NbtUtils;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -60,7 +61,12 @@ public final class ArmorCopycatItemData {
     }
 
     public static BlockState defaultMaterial() {
-        return Blocks.IRON_BLOCK.defaultBlockState();
+        Block copycatBase = BuiltInRegistries.BLOCK.get(ResourceLocation.fromNamespaceAndPath("create", "copycat_base"));
+        if (copycatBase != Blocks.AIR) {
+            return copycatBase.defaultBlockState();
+        }
+        copycatBase = BuiltInRegistries.BLOCK.get(ResourceLocation.fromNamespaceAndPath("copycats", "copycat_base"));
+        return copycatBase != Blocks.AIR ? copycatBase.defaultBlockState() : Blocks.IRON_BLOCK.defaultBlockState();
     }
 
     public static int getOffsets(ItemStack stack) {

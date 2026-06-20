@@ -2,8 +2,9 @@ package com.cbc_terminal_ballistics.armor;
 
 import com.cbc_terminal_ballistics.registry.ModBlockEntities;
 import com.cbc_terminal_ballistics.registry.ModItems;
+import com.copycatsplus.copycats.foundation.copycat.CCCopycatBlock;
 import com.copycatsplus.copycats.foundation.copycat.CCCopycatBlockEntity;
-import com.simibubi.create.foundation.block.IBE;
+import com.simibubi.create.content.contraptions.StructureTransform;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
@@ -48,7 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class FramedCollapsibleCopycatArmorBlock extends Block implements IBE<CCCopycatBlockEntity>, SimpleWaterloggedBlock {
+public class FramedCollapsibleCopycatArmorBlock extends CCCopycatBlock implements SimpleWaterloggedBlock {
     public static final BooleanProperty WATERLOGGED = BlockStateProperties.WATERLOGGED;
 
     private static final int UP = Direction.UP.ordinal();
@@ -72,7 +73,7 @@ public class FramedCollapsibleCopycatArmorBlock extends Block implements IBE<CCC
     }
 
     @Override
-    protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+    public ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
         if (hand != InteractionHand.MAIN_HAND) {
             return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
         }
@@ -95,24 +96,32 @@ public class FramedCollapsibleCopycatArmorBlock extends Block implements IBE<CCC
         if (!isAcceptedMaterial(level, pos, material)) {
             return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
         }
+
+        BlockEntity existing = level.getBlockEntity(pos);
+        if (!(existing instanceof FramedCollapsibleCopycatArmorBlockEntity armor)) {
+            return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+        }
+        if (armor.hasCopiedMaterial()) {
+            return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+        }
         if (level.isClientSide) {
             return ItemInteractionResult.SUCCESS;
         }
         return onBlockEntityUse(level, pos, be -> {
-            if (!(be instanceof FramedCollapsibleCopycatArmorBlockEntity armor)) {
+            if (!(be instanceof FramedCollapsibleCopycatArmorBlockEntity serverArmor)) {
                 return InteractionResult.PASS;
             }
-            if (armor.hasCopiedMaterial()) {
+            if (serverArmor.hasCopiedMaterial()) {
                 return InteractionResult.PASS;
             }
-            armor.setCopiedMaterial(material);
-            armor.setConsumedItem(stack);
+            serverArmor.setCopiedMaterial(material);
+            serverArmor.setConsumedItem(stack);
             level.playSound(null, pos, material.getSoundType().getPlaceSound(), SoundSource.BLOCKS, 1.0f, 0.75f);
             if (!player.isCreative()) {
                 stack.shrink(1);
             }
             return InteractionResult.CONSUME;
-        }) == InteractionResult.CONSUME ? ItemInteractionResult.CONSUME : ItemInteractionResult.SUCCESS;
+        }) == InteractionResult.CONSUME ? ItemInteractionResult.CONSUME : ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
     }
 
     private InteractionResult removeCopiedMaterial(Level level, BlockPos pos, Player player) {
@@ -126,9 +135,7 @@ public class FramedCollapsibleCopycatArmorBlock extends Block implements IBE<CCC
             if (!armor.hasCopiedMaterial()) {
                 return InteractionResult.PASS;
             }
-            ItemStack removed = armor.getConsumedItem();
-            armor.setCopiedMaterial(ArmorCopycatItemData.defaultMaterial());
-            armor.setConsumedItem(ItemStack.EMPTY);
+            ItemStack removed = armor.removeCopiedMaterial();
             if (!removed.isEmpty() && !player.isCreative()) {
                 player.getInventory().placeItemBackInInventory(removed);
             }
@@ -264,7 +271,7 @@ public class FramedCollapsibleCopycatArmorBlock extends Block implements IBE<CCC
 
     @Override
     public RenderShape getRenderShape(BlockState state) {
-        return RenderShape.INVISIBLE;
+        return RenderShape.MODEL;
     }
 
     @Override
@@ -283,6 +290,11 @@ public class FramedCollapsibleCopycatArmorBlock extends Block implements IBE<CCC
             level.scheduleTick(pos, Fluids.WATER, Fluids.WATER.getTickDelay(level));
         }
         return super.updateShape(state, direction, neighborState, level, pos, neighborPos);
+    }
+
+    @Override
+    public BlockState transform(BlockState state, StructureTransform transform) {
+        return state;
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})

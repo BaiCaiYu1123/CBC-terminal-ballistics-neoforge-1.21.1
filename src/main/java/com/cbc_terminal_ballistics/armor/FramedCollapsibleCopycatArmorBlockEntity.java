@@ -17,8 +17,12 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import com.copycatsplus.copycats.foundation.copycat.model.neoforge.CopycatModelNeoForge;
+import net.neoforged.neoforge.client.model.data.ModelData;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
@@ -33,7 +37,7 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
 
     private int armorLevel = MIN_LEVEL;
     private int packedOffsets = 0;
-    private net.minecraft.world.level.block.state.BlockState copiedMaterial = net.minecraft.world.level.block.Blocks.IRON_BLOCK.defaultBlockState();
+    private BlockState copiedMaterial = ArmorCopycatItemData.defaultMaterial();
     private boolean armorHasCustomMaterial = false;
 
     public FramedCollapsibleCopycatArmorBlockEntity(BlockPos pos, BlockState state) {
@@ -41,18 +45,18 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
     }
 
     public BlockState getCopiedMaterial() {
-        return copiedMaterial != null && !copiedMaterial.isAir() ? copiedMaterial : net.minecraft.world.level.block.Blocks.IRON_BLOCK.defaultBlockState();
+        return copiedMaterial != null && !copiedMaterial.isAir() ? copiedMaterial : ArmorCopycatItemData.defaultMaterial();
     }
 
     public void setCopiedMaterial(BlockState copiedMaterial) {
         BlockState material = copiedMaterial == null || copiedMaterial.isAir()
-                ? net.minecraft.world.level.block.Blocks.IRON_BLOCK.defaultBlockState()
+                ? ArmorCopycatItemData.defaultMaterial()
                 : copiedMaterial;
         this.copiedMaterial = material;
         this.armorHasCustomMaterial = true;
         setMaterial(material);
         setConsumedItem(stackForMaterial(material));
-        notifyUpdate();
+        refreshModel();
     }
 
     public boolean hasCopiedMaterial() {
@@ -60,16 +64,19 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
     }
 
     public ItemStack removeCopiedMaterial() {
+        if (!armorHasCustomMaterial) {
+            return ItemStack.EMPTY;
+        }
         BlockState current = getCopiedMaterial();
         if (current == null || current.isAir()) {
             return ItemStack.EMPTY;
         }
         Item item = current.getBlock().asItem();
-        this.copiedMaterial = net.minecraft.world.level.block.Blocks.IRON_BLOCK.defaultBlockState();
+        this.copiedMaterial = ArmorCopycatItemData.defaultMaterial();
         this.armorHasCustomMaterial = false;
         setMaterial(ArmorCopycatItemData.defaultMaterial());
         setConsumedItem(ItemStack.EMPTY);
-        notifyUpdate();
+        refreshModel();
         return item == Items.AIR ? ItemStack.EMPTY : new ItemStack(item);
     }
 
@@ -92,7 +99,7 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
 
     public void setPackedOffsets(int packedOffsets) {
         this.packedOffsets = ArmorCopycatItemData.sanitizeOffsets(packedOffsets);
-        notifyUpdate();
+        refreshModel();
     }
 
     public int getFaceOffset(Direction side) {
@@ -115,7 +122,7 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
         int idx = side.ordinal() * 4;
         int mask = 0xF << idx;
         packedOffsets = (packedOffsets & ~mask) | (offset << idx);
-        notifyUpdate();
+        refreshModel();
     }
 
     public void loadFromItem(ItemStack stack) {
@@ -133,8 +140,8 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
             this.copiedMaterial = ArmorCopycatItemData.defaultMaterial();
             this.armorHasCustomMaterial = false;
             setMaterial(ArmorCopycatItemData.defaultMaterial());
-            setConsumedItem(stackForMaterial(ArmorCopycatItemData.defaultMaterial()));
-            notifyUpdate();
+            setConsumedItem(ItemStack.EMPTY);
+            refreshModel();
         }
         setPackedOffsets(FramedCollapsibleCopycatArmorItem.getOffsets(stack));
     }
@@ -153,6 +160,14 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
 
     @Override
     public void addBehaviours(List<BlockEntityBehaviour> behaviours) {
+    }
+
+    @Override
+    public ModelData getModelData() {
+        return ModelData.builder()
+                .with(CopycatModelNeoForge.MATERIAL_PROPERTY, getMaterial())
+                .with(FramedCollapsibleCopycatArmorModelProperties.PACKED_OFFSETS, getPackedOffsets())
+                .build();
     }
 
     @Override
@@ -229,6 +244,14 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
             this.copiedMaterial = ArmorCopycatItemData.defaultMaterial();
             this.armorHasCustomMaterial = false;
         }
+        if (armorHasCustomMaterial) {
+            setMaterialInternal(getCopiedMaterial());
+            setConsumedItemInternal(stackForMaterial(getCopiedMaterial()));
+        } else {
+            setMaterialInternal(ArmorCopycatItemData.defaultMaterial());
+            setConsumedItemInternal(ItemStack.EMPTY);
+        }
+        refreshModel();
     }
 
     @Override
@@ -267,5 +290,29 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
         }
         Item item = material.getBlock().asItem();
         return item == Items.AIR ? ItemStack.EMPTY : new ItemStack(item);
+    }
+
+    private void refreshModel() {
+        Level level = getLevel();
+        requestModelDataUpdate();
+        if (level != null) {
+            BlockState state = getBlockState();
+            if (level.isClientSide) {
+                level.sendBlockUpdated(getBlockPos(), state, state, Block.UPDATE_ALL);
+                refreshClientRenderer(getBlockPos(), state);
+            } else {
+                notifyUpdate();
+            }
+            setChanged();
+        }
+    }
+
+    private static void refreshClientRenderer(BlockPos pos, BlockState state) {
+        try {
+            Class<?> helper = Class.forName("com.cbc_terminal_ballistics.client.FramedCollapsibleCopycatArmorClientRefresh");
+            helper.getMethod("refresh", BlockPos.class, BlockState.class).invoke(null, pos, state);
+        } catch (ReflectiveOperationException ignored) {
+            // Client-only renderer refresh is best-effort; normal block updates still keep data synced.
+        }
     }
 }

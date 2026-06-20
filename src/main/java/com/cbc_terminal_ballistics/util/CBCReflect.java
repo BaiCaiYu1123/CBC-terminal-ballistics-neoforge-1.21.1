@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.core.Direction;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -141,6 +142,20 @@ public final class CBCReflect {
             }
         } catch (Throwable ex) {
             CBCTerminalBallistics.LOGGER.debug("Failed to add CBC block hit effect", ex);
+        }
+    }
+
+    public static boolean detonateCbcProjectileBlock(Level level, BlockPos pos, BlockState state, Direction hitFace) {
+        if (level == null || pos == null || state == null) return false;
+        try {
+            Method method = findMethod(state.getBlock().getClass(), "detonateProjectileOnTheSpot", Level.class, BlockPos.class, BlockState.class, Direction.class);
+            if (method == null) return false;
+            method.setAccessible(true);
+            method.invoke(state.getBlock(), level, pos, state, hitFace == null ? Direction.UP : hitFace);
+            return true;
+        } catch (Throwable t) {
+            CBCTerminalBallistics.LOGGER.debug("Failed to detonate CBC projectile block", t);
+            return false;
         }
     }
 
