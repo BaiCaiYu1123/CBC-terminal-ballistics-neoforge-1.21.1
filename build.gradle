@@ -78,6 +78,11 @@ dependencies {
     compileOnly("net.createmod.ponder:Ponder-NeoForge-${minecraft_version}:${ponder_version}")
     compileOnly("com.tterrag.registrate:Registrate:${registrate_version}")
 
+    // Compile against the exact CBC release this compatibility build targets.
+    // Runtime integration remains reflection-based so supported 5.10.x builds
+    // can still load the same jar.
+    compileOnly("maven.modrinth:${cbc_modrinth_project}:${cbc_modrinth_version}") { transitive = false }
+
     // Copycats+ support
     compileOnly 'maven.modrinth:copycats:3.0.4+mc.1.21.1-neoforge'
     runtimeOnly 'maven.modrinth:copycats:3.0.4+mc.1.21.1-neoforge'

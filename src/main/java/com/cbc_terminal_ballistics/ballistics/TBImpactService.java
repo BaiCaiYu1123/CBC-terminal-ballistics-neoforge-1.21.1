@@ -1,7 +1,10 @@
 package com.cbc_terminal_ballistics.ballistics;
 
 import com.cbc_terminal_ballistics.CBCTerminalBallistics;
+import com.cbc_terminal_ballistics.armor.CopycatArmorLayerBlock;
+import com.cbc_terminal_ballistics.armor.FramedCollapsibleCopycatArmorBlock;
 import com.cbc_terminal_ballistics.config.TBConfig;
+import com.cbc_terminal_ballistics.compat.CBCNeoWarfareCompat;
 import com.cbc_terminal_ballistics.compat.TestLauncherProjectileCompat;
 import com.cbc_terminal_ballistics.data.CopycatMaterialResolver;
 import com.cbc_terminal_ballistics.data.MaterialManager;
@@ -44,6 +47,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 public final class TBImpactService {
     private static final Map<LastImpactKey, LastImpact> LAST_IMPACTS = new HashMap<>();
@@ -76,7 +80,8 @@ public final class TBImpactService {
             double armorHardness = CBCReflect.armorHardness(level, state, pos, fallbackHardness);
             boolean unbreakable = CBCReflect.griefNoDamage(projectileContext) || state.getDestroySpeed(level, pos) < 0;
 
-            BlockState materialState = CopycatMaterialResolver.resolve(level, pos, state, hit).orElse(state);
+            Optional<BlockState> copiedMaterial = CopycatMaterialResolver.resolve(level, pos, state, hit);
+            BlockState materialState = copiedMaterial.orElse(state);
             MaterialStats material = MaterialManager.INSTANCE.get(materialState, baseArmorToughness);
             ImpactSurfaceType impactSurface = material.surface();
             TBCaliber caliber = ProjectileClassifier.classify(projectile, autocannonHint);
@@ -128,7 +133,8 @@ public final class TBImpactService {
                 double bounceBonus = autocannon ? 1.0D : Math.max(1.0D - hardnessPenaltyRaw, 0.0D);
                 bounceChance = Math.max(CBCReflect.baseProjectileBounceChance(), 1.0D - incidence / deflection) * bounceBonus;
             }
-            if (surfaceImpact && CBCReflect.projectilesCanBounce() && level.random.nextDouble() < bounceChance) {
+            boolean forcedApfsdsRicochet = CBCNeoWarfareCompat.shouldForceApfsdsRicochet(projectile, incidence);
+            if (surfaceImpact && CBCReflect.projectilesCanBounce() && (forcedApfsdsRicochet || level.random.nextDouble() < bounceChance)) {
                 if (!level.isClientSide) {
                     Vec3 effectNormal = curVel.subtract(normal.scale(normal.dot(curVel) * 1.7D));
                     CBCReflect.addBlockHitEffect(projectileContext, projectile, level, state, pos, hit.getLocation(), effectNormal, true);
@@ -169,7 +175,9 @@ public final class TBImpactService {
             double spallDamageModifier = 0.0;
             String spallReason = "not_checked";
             if (level instanceof ServerLevel server) {
-                if (projectile instanceof Projectile p) state.onProjectileHit(level, state, hit, p);
+                if (projectile instanceof Projectile p && !shouldSkipProjectileHit(state, copiedMaterial.isPresent())) {
+                    state.onProjectileHit(level, state, hit, p);
+                }
                 CBCReflect.addBlockHitEffect(projectileContext, projectile, level, state, pos, hit.getLocation(), curVel.reverse(), false);
                 sendArmorSparks(server, pos, hit.getLocation(), curVel.reverse().add(normal.scale(velMag * 0.35D)), armorToughness, caliber, velMag);
                 playHardBlockImpactSound(server, pos, armorToughness, caliber, velMag);
@@ -191,7 +199,8 @@ public final class TBImpactService {
                         // it), so CBC's "block break on impact" sound is not played.
                         // CTB keeps the block intact, so replay the same sound CBC
                         // would have used in the stopped branch.
-                        Vec3 spallLoc = hit.getLocation().add(velDir.normalize().scale(2));
+                        SpallExit spallExit = spallExitOrigin(server, pos, hit);
+                        Vec3 spallLoc = spallExit.origin().add(spallExit.direction().scale(1.5D));
                         CBCReflect.playBlockImpactBreakSound(server, state, spallLoc);
                         TemporaryBlockPassage.phaseForThisTick(server, pos, state);
                     }
@@ -204,10 +213,12 @@ public final class TBImpactService {
                         projectile.setDeltaMovement(projectile.getDeltaMovement().scale(factor));
                     }
                     if (ProjectileClassifier.canSpall(projectile)) {
-                        Vec3 spallOrigin = hit.getLocation().add(velDir.scale(1.05));
+                        SpallExit spallExit = spallExitOrigin(server, pos, hit);
+                        Vec3 spallOrigin = spallExit.origin();
+                        Vec3 spallDirection = spallExit.direction();
                         spallDamageModifier = ProjectileClassifier.shellSpallDamageModifier(projectile);
                         double massAfter = Math.max(0.0, mass - massLoss);
-                        spallFragments = spawnSpall(server, projectile, spallOrigin, velDir, velMag, caliber, mass, massAfter, material, baseArmorToughness);
+                        spallFragments = spawnSpall(server, projectile, spallOrigin, spallDirection, velMag, caliber, mass, massAfter, material, baseArmorToughness);
                         spallReason = spallFragments > 0 ? "spawned" : "zero_fragments";
                     } else {
                         spallReason = "not_ap_style";
@@ -346,11 +357,36 @@ public final class TBImpactService {
         return SableCompat.toSubLevelCoordinates(level, pos, hitLocation);
     }
 
+    private static SpallExit spallExitOrigin(ServerLevel level, BlockPos pos, BlockHitResult hit) {
+        Direction exitFace = hit.getDirection().getOpposite();
+        Vec3 local = localHitLocation(level, pos, hit.getLocation());
+        double x = Mth.clamp(local.x - pos.getX(), 0.001D, 0.999D);
+        double y = Mth.clamp(local.y - pos.getY(), 0.001D, 0.999D);
+        double z = Mth.clamp(local.z - pos.getZ(), 0.001D, 0.999D);
+        double e = 0.025D;
+        switch (exitFace) {
+            case DOWN -> y = -e;
+            case UP -> y = 1.0D + e;
+            case NORTH -> z = -e;
+            case SOUTH -> z = 1.0D + e;
+            case WEST -> x = -e;
+            case EAST -> x = 1.0D + e;
+        }
+        return new SpallExit(new Vec3(pos.getX() + x, pos.getY() + y, pos.getZ() + z), Vec3.atLowerCornerOf(exitFace.getNormal()).normalize());
+    }
+
+    private static boolean shouldSkipProjectileHit(BlockState state, boolean hasCopiedMaterial) {
+        return hasCopiedMaterial
+            || state.getBlock() instanceof CopycatArmorLayerBlock
+            || state.getBlock() instanceof FramedCollapsibleCopycatArmorBlock;
+    }
+
     private static void syncMarks(ServerLevel level, BlockPos pos, java.util.List<ImpactMark> marks) {
         // Send sub-level local coordinates as-is. The client uses the sub-level's
         // render pose to transform marks into world space at render time, so they
         // follow the physical structure as it moves/rotates.
-        ClientboundImpactMarksPacket packet = new ClientboundImpactMarksPacket(pos, java.util.List.copyOf(marks));
+        ClientboundImpactMarksPacket packet = new ClientboundImpactMarksPacket(
+                pos, SableCompat.subLevelId(level, pos), java.util.List.copyOf(marks));
         // Distance check uses world coords so nearby overworld players receive the packet.
         Vec3 worldCenter = SableCompat.toWorldCoordinates(level, Vec3.atCenterOf(pos));
         List<ServerPlayer> players = getRelevantPlayers(level, pos);
@@ -397,10 +433,12 @@ public final class TBImpactService {
         if (visualFragments <= 0) return;
         float intensity = (float) Mth.clamp(0.65D + massRatio * 1.0D + caliber.ordinal() * 0.12D, 0.45D, 2.25D);
         long seed = spallVisualSeed(level, projectile, origin, dir, fragments);
-        // Send sub-level local origin — client applies render-pose transform at draw time.
-        ClientboundSpallConePacket packet = new ClientboundSpallConePacket(origin, dir.normalize(), coneCos, range,
-            visualFragments, seed, intensity, caliber);
+        // Client spall visuals render directly in world space.
         Vec3 worldOrigin = SableCompat.toWorldCoordinates(level, origin);
+        Vec3 worldForward = SableCompat.toWorldCoordinates(level, origin.add(dir.normalize())).subtract(worldOrigin);
+        if (worldForward.lengthSqr() < 1.0e-6D) worldForward = dir;
+        ClientboundSpallConePacket packet = new ClientboundSpallConePacket(worldOrigin, worldForward.normalize(), coneCos, range,
+            visualFragments, seed, intensity, caliber);
         List<ServerPlayer> players = getRelevantPlayers(level, BlockPos.containing(origin));
         for (ServerPlayer player : players) {
             if (worldOrigin.distanceToSqr(player.position()) <= 128 * 128) {
@@ -733,6 +771,8 @@ public final class TBImpactService {
                              double armorToughness, double armorHardness, double effectiveToughness,
                              double attack, double resistance, double penetrationRatio, double massLoss,
                              int spallFragments, double spallDamageModifier, String spallReason) {}
+
+    private record SpallExit(Vec3 origin, Vec3 direction) {}
 
     private record LastImpactKey(net.minecraft.resources.ResourceLocation dimension, net.minecraft.core.BlockPos pos) {}
 

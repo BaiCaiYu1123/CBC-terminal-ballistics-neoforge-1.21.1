@@ -293,6 +293,15 @@ public class FramedCollapsibleCopycatArmorBlock extends CCCopycatBlock implement
     }
 
     @Override
+    protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock,
+                                   BlockPos neighborPos, boolean movedByPiston) {
+        super.neighborChanged(state, level, pos, neighborBlock, neighborPos, movedByPiston);
+        if (!level.isClientSide && level.getBlockEntity(pos) instanceof FramedCollapsibleCopycatArmorBlockEntity armor) {
+            armor.requestSableCollisionRefresh();
+        }
+    }
+
+    @Override
     public BlockState transform(BlockState state, StructureTransform transform) {
         return state;
     }
@@ -320,6 +329,13 @@ public class FramedCollapsibleCopycatArmorBlock extends CCCopycatBlock implement
     @Nullable
     @Override
     public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state, BlockEntityType<T> type) {
-        return null;
+        if (level.isClientSide || type != ModBlockEntities.FRAMED_COLLAPSIBLE_COPYCAT_ARMOR.get()) {
+            return null;
+        }
+        return (tickerLevel, tickerPos, tickerState, blockEntity) -> {
+            if (blockEntity instanceof FramedCollapsibleCopycatArmorBlockEntity armor) {
+                armor.tickSableCollision();
+            }
+        };
     }
 }

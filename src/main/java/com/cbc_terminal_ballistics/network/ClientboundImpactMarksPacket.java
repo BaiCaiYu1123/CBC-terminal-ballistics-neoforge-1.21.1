@@ -17,8 +17,9 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
-public record ClientboundImpactMarksPacket(BlockPos pos, List<ImpactMark> marks) implements CustomPacketPayload {
+public record ClientboundImpactMarksPacket(BlockPos pos, UUID subLevelId, List<ImpactMark> marks) implements CustomPacketPayload {
 
     public static final Type<ClientboundImpactMarksPacket> TYPE =
         new Type<>(ResourceLocation.fromNamespaceAndPath(CBCTerminalBallistics.MOD_ID, "impact_marks"));
@@ -34,6 +35,8 @@ public record ClientboundImpactMarksPacket(BlockPos pos, List<ImpactMark> marks)
         buf.writeInt(pos.getX());
         buf.writeInt(pos.getY());
         buf.writeInt(pos.getZ());
+        buf.writeBoolean(subLevelId != null);
+        if (subLevelId != null) buf.writeUUID(subLevelId);
         buf.writeVarInt(marks.size());
         for (ImpactMark mark : marks) {
             buf.writeEnum(mark.kind());
@@ -50,6 +53,7 @@ public record ClientboundImpactMarksPacket(BlockPos pos, List<ImpactMark> marks)
 
     private static ClientboundImpactMarksPacket decode(RegistryFriendlyByteBuf buf) {
         BlockPos pos = new BlockPos(buf.readInt(), buf.readInt(), buf.readInt());
+        UUID subLevelId = buf.readBoolean() ? buf.readUUID() : null;
         int count = buf.readVarInt();
         List<ImpactMark> marks = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
@@ -60,7 +64,7 @@ public record ClientboundImpactMarksPacket(BlockPos pos, List<ImpactMark> marks)
             marks.add(new ImpactMark(kind, caliber, surface, face,
                 buf.readFloat(), buf.readFloat(), buf.readFloat(), buf.readFloat(), buf.readLong()));
         }
-        return new ClientboundImpactMarksPacket(pos, marks);
+        return new ClientboundImpactMarksPacket(pos, subLevelId, marks);
     }
 
     @Override

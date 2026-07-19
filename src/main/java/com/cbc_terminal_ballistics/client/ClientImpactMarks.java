@@ -40,6 +40,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 
 @EventBusSubscriber(modid = "cbc_terminal_ballistics", value = Dist.CLIENT)
 public final class ClientImpactMarks {
@@ -68,15 +70,15 @@ public final class ClientImpactMarks {
     private static final ResourceLocation GENERAL_RICOCHET_MEDIUM_TEXTURE = ResourceLocation.fromNamespaceAndPath(CBCTerminalBallistics.MOD_ID, "textures/impact/general/ricochet_medium.png");
     private static final ResourceLocation GENERAL_RICOCHET_BIG_TEXTURE = ResourceLocation.fromNamespaceAndPath(CBCTerminalBallistics.MOD_ID, "textures/impact/general/ricochet_big.png");
 
-    private static final Map<BlockPos, List<ImpactMark>> MARKS = new HashMap<>();
+    private static final Map<BlockPos, MarkSet> MARKS = new HashMap<>();
     private static final Logger LOGGER = LoggerFactory.getLogger("cbc_terminal_ballistics:ClientImpactMarks");
     private static int markRenderCounter = 0;
     private static int markAcceptCounter = 0;
 
-    public static void accept(BlockPos pos, List<ImpactMark> marks) {
+    public static void accept(BlockPos pos, UUID subLevelId, List<ImpactMark> marks) {
         if (marks.isEmpty()) MARKS.remove(pos);
         else {
-            MARKS.put(pos.immutable(), List.copyOf(marks));
+            MARKS.put(pos.immutable(), new MarkSet(subLevelId, List.copyOf(marks)));
             if (markAcceptCounter < 10) {
                 LOGGER.warn("Received {} marks at {} (Sable: subLevel={})", marks.size(), pos.toShortString(), SableCompat.isInSubLevel(Minecraft.getInstance().level, pos));
                 markAcceptCounter++;
@@ -96,12 +98,18 @@ public final class ClientImpactMarks {
 
         long now = mc.level.getGameTime();
         int lifetime = overlayLifetime();
-        MARKS.entrySet().removeIf(entry -> entry.getValue().stream().allMatch(mark -> now - mark.gameTime() >= lifetime));
+        MARKS.entrySet().removeIf(entry -> {
+            MarkSet markSet = entry.getValue();
+            UUID currentSubLevelId = SableCompat.subLevelId(mc.level, entry.getKey());
+            return currentSubLevelId != null && !Objects.equals(markSet.subLevelId(), currentSubLevelId)
+                    || markSet.marks().stream().allMatch(mark -> now - mark.gameTime() >= lifetime);
+        });
 
         // --- ADDED PERSISTENT FLAME LOGIC ---
-        for (Map.Entry<BlockPos, List<ImpactMark>> entry : MARKS.entrySet()) {
+        for (Map.Entry<BlockPos, MarkSet> entry : MARKS.entrySet()) {
             BlockPos pos = entry.getKey();
-            for (ImpactMark mark : entry.getValue()) {
+            if (!hasCurrentOwner(mc.level, pos, entry.getValue())) continue;
+            for (ImpactMark mark : entry.getValue().marks()) {
                 long age = now - mark.gameTime();
 
                 // Burn for 3 seconds (60 ticks).
@@ -178,8 +186,9 @@ public final class ClientImpactMarks {
             markRenderCounter++;
         }
 
-        for (Map.Entry<BlockPos, List<ImpactMark>> entry : MARKS.entrySet()) {
+        for (Map.Entry<BlockPos, MarkSet> entry : MARKS.entrySet()) {
             BlockPos pos = entry.getKey();
+            if (!hasCurrentOwner(mc.level, pos, entry.getValue())) continue;
             boolean sableSubLevelMark = isSableSubLevelMark(mc.level, pos);
             if (!sableSubLevelMark
                 && SableCompat.squaredDistanceBetweenInclSubLevels(mc.level, Vec3.atCenterOf(pos), mc.player.position()) > 128 * 128) {
@@ -197,7 +206,7 @@ public final class ClientImpactMarks {
                 }
                 continue;
             }
-            for (ImpactMark mark : entry.getValue()) {
+            for (ImpactMark mark : entry.getValue().marks()) {
                 long age = now - mark.gameTime();
                 if (age < 0 || age >= lifetime) continue;
                 if (markRenderCounter < 20) {
@@ -218,6 +227,16 @@ public final class ClientImpactMarks {
     private static boolean isSableSubLevelMark(Level level, BlockPos pos) {
         return SableCompat.isPresent()
             && (SableCompat.isProbablyInSubLevel(pos) || SableCompat.isInSubLevel(level, pos));
+    }
+
+    private static boolean hasCurrentOwner(Level level, BlockPos pos, MarkSet markSet) {
+        UUID expected = markSet.subLevelId();
+        UUID current = SableCompat.subLevelId(level, pos);
+        if (expected != null) return expected.equals(current);
+        return current == null && !SableCompat.isProbablyInSubLevel(pos);
+    }
+
+    private record MarkSet(UUID subLevelId, List<ImpactMark> marks) {
     }
 
     private static boolean canAttach(Level level, BlockPos pos, BlockState state) {

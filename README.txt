@@ -52,12 +52,12 @@ Dependencies (NeoForge 1.21.1)
 ------------------------------
 
 Required:
-  - Create: 6.0.6+
+  - Create: 6.0.7-6.0.x (development build: 6.0.10-281)
   - Copycats+: 3.0.4+
-  - Create Big Cannons: 5.10.2+
+  - Create Big Cannons: 5.10.x-5.11.7 (development build: 5.11.7)
 
 Optional:
-  - Valkyrien Skies (Sable): 1.2.2+
+  - Valkyrien Skies (Sable): 1.2.2 or 2.0.3
     (All features work normally without it; install for impact marks that
      follow physical structures)
   - CBC More Shells: optional
@@ -76,6 +76,18 @@ Key changes:
   - Added spall cone visualization
   - Added armor impact spark particle effects
   - Improved Copycats+ integration
+
+
+Sable compatibility notes
+-------------------------
+
+The same CBC: Terminal Ballistics jar supports both Sable 1.2.2 and the latest
+tested release, Sable 2.0.3. Sable remains optional and is accessed through its
+bundled Companion API, so separate builds are not required.
+
+Sable 2.0.3 itself requires NeoForge 21.1.228+ and Create 6.0.10+. These are
+requirements imposed by Sable; players staying on Sable 1.2.2 can keep their
+existing compatible Create setup.
 
 
 Credits

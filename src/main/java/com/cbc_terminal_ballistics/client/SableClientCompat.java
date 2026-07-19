@@ -124,8 +124,8 @@ public final class SableClientCompat {
                 return method.invoke(companionInstance, level, pos);
             }
             if (paramTypes[0] == int.class) {
-                // (int x, int z)
-                return method.invoke(companionInstance, pos.getX(), pos.getZ());
+                // Companion's integer overload uses chunk coordinates.
+                return method.invoke(companionInstance, pos.getX() >> 4, pos.getZ() >> 4);
             }
             if (paramTypes[0] == double.class) {
                 // (double x, double z)

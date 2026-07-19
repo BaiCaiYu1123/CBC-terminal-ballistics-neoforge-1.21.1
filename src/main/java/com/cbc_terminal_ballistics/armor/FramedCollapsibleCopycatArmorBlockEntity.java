@@ -1,6 +1,7 @@
 package com.cbc_terminal_ballistics.armor;
 
 import com.cbc_terminal_ballistics.registry.ModBlockEntities;
+import com.cbc_terminal_ballistics.util.SablePhysicsCompat;
 import com.copycatsplus.copycats.foundation.copycat.CCCopycatBlockEntity;
 import com.simibubi.create.content.contraptions.StructureTransform;
 import com.simibubi.create.content.schematics.requirement.ItemRequirement;
@@ -17,6 +18,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -39,6 +41,10 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
     private int packedOffsets = 0;
     private BlockState copiedMaterial = ArmorCopycatItemData.defaultMaterial();
     private boolean armorHasCustomMaterial = false;
+    private boolean sableCollisionRefreshPending = true;
+    private int sableCollisionRefreshDelay;
+    private int sableCollisionRefreshAttempts;
+    private int lastSableColliderOffsets = Integer.MIN_VALUE;
 
     public FramedCollapsibleCopycatArmorBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.FRAMED_COLLAPSIBLE_COPYCAT_ARMOR.get(), pos, state);
@@ -183,6 +189,7 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
     public void transform(@Nullable BlockEntity be, StructureTransform transform) {
         super.transform(be, transform);
         packedOffsets = transformOffsets(packedOffsets, transform);
+        requestSableCollisionRefresh();
         notifyUpdate();
     }
 
@@ -301,9 +308,51 @@ public class FramedCollapsibleCopycatArmorBlockEntity extends CCCopycatBlockEnti
                 level.sendBlockUpdated(getBlockPos(), state, state, Block.UPDATE_ALL);
                 refreshClientRenderer(getBlockPos(), state);
             } else {
+                requestSableCollisionRefresh();
                 notifyUpdate();
             }
             setChanged();
+        }
+    }
+
+    public void requestSableCollisionRefresh() {
+        sableCollisionRefreshPending = true;
+        sableCollisionRefreshDelay = 0;
+        sableCollisionRefreshAttempts = 0;
+    }
+
+    public void tickSableCollision() {
+        if (!sableCollisionRefreshPending || !(getLevel() instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        if (sableCollisionRefreshDelay > 0) {
+            sableCollisionRefreshDelay--;
+            return;
+        }
+
+        int offsets = getPackedOffsets();
+        if (offsets == 0 && lastSableColliderOffsets == Integer.MIN_VALUE) {
+            sableCollisionRefreshPending = false;
+            return;
+        }
+
+        SablePhysicsCompat.RefreshResult result = SablePhysicsCompat.refreshBlockCollider(
+                serverLevel,
+                getBlockPos(),
+                getBlockState(),
+                getBlockState().getCollisionShape(serverLevel, getBlockPos()),
+                offsets
+        );
+        if (result == SablePhysicsCompat.RefreshResult.UPDATED) {
+            lastSableColliderOffsets = offsets;
+            sableCollisionRefreshPending = false;
+            sableCollisionRefreshAttempts = 0;
+        } else if (result == SablePhysicsCompat.RefreshResult.NOT_APPLICABLE) {
+            sableCollisionRefreshPending = false;
+        } else if (++sableCollisionRefreshAttempts >= 100) {
+            sableCollisionRefreshPending = false;
+        } else {
+            sableCollisionRefreshDelay = 4;
         }
     }
 

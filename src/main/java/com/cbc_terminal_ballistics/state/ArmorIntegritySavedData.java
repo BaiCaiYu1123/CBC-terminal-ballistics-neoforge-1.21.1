@@ -1,6 +1,7 @@
 package com.cbc_terminal_ballistics.state;
 
 import com.cbc_terminal_ballistics.config.TBConfig;
+import com.cbc_terminal_ballistics.util.SableCompat;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -16,6 +17,8 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 
 public class ArmorIntegritySavedData extends SavedData {
     private static final String NAME = "cbc_terminal_ballistics_integrity";
@@ -31,9 +34,10 @@ public class ArmorIntegritySavedData extends SavedData {
 
     public Entry entryFor(ServerLevel level, BlockPos pos, BlockState state) {
         String fp = fingerprint(state);
+        UUID subLevelId = SableCompat.subLevelId(level, pos);
         Entry e = entries.get(pos);
-        if (e == null || !e.fingerprint.equals(fp)) {
-            e = new Entry(fp, 0, level.getGameTime(), new ArrayList<>());
+        if (e == null || !e.fingerprint.equals(fp) || !Objects.equals(e.subLevelId, subLevelId)) {
+            e = new Entry(fp, subLevelId, 0, level.getGameTime(), new ArrayList<>());
             entries.put(pos.immutable(), e);
             setDirty();
         }
@@ -43,7 +47,8 @@ public class ArmorIntegritySavedData extends SavedData {
     public Entry getEntry(ServerLevel level, BlockPos pos) {
         Entry e = entries.get(pos);
         if (e == null) return null;
-        if (!e.fingerprint.equals(fingerprint(level.getBlockState(pos)))) {
+        if (!e.fingerprint.equals(fingerprint(level.getBlockState(pos)))
+                || !Objects.equals(e.subLevelId, SableCompat.subLevelId(level, pos))) {
             entries.remove(pos);
             setDirty();
             return null;
@@ -116,7 +121,10 @@ public class ArmorIntegritySavedData extends SavedData {
             Map.Entry<BlockPos, Entry> mapEntry = it.next();
             BlockPos pos = mapEntry.getKey();
             Entry e = mapEntry.getValue();
-            if (level.isEmptyBlock(pos) || !e.fingerprint.equals(fingerprint(level.getBlockState(pos))) || now - e.lastTouched > ttl * 4L) {
+            if (level.isEmptyBlock(pos)
+                    || !e.fingerprint.equals(fingerprint(level.getBlockState(pos)))
+                    || !Objects.equals(e.subLevelId, SableCompat.subLevelId(level, pos))
+                    || now - e.lastTouched > ttl * 4L) {
                 it.remove();
                 removed.add(pos);
                 dirty = true;
@@ -140,6 +148,7 @@ public class ArmorIntegritySavedData extends SavedData {
             eTag.putInt("Z", pos.getZ());
             Entry e = mapEntry.getValue();
             eTag.putString("Fp", e.fingerprint);
+            if (e.subLevelId != null) eTag.putString("SubLevelId", e.subLevelId.toString());
             eTag.putDouble("Damage", e.damage);
             eTag.putLong("Touched", e.lastTouched);
             ListTag marks = new ListTag();
@@ -160,9 +169,20 @@ public class ArmorIntegritySavedData extends SavedData {
             ListTag markTags = eTag.getList("Marks", Tag.TAG_COMPOUND);
             for (Tag mt : markTags) marks.add(ImpactMark.load((CompoundTag) mt));
             BlockPos pos = new BlockPos(eTag.getInt("X"), eTag.getInt("Y"), eTag.getInt("Z"));
-            data.entries.put(pos, new Entry(eTag.getString("Fp"), eTag.getDouble("Damage"), eTag.getLong("Touched"), marks));
+            UUID subLevelId = readUuid(eTag.getString("SubLevelId"));
+            data.entries.put(pos, new Entry(eTag.getString("Fp"), subLevelId,
+                    eTag.getDouble("Damage"), eTag.getLong("Touched"), marks));
         }
         return data;
+    }
+
+    private static UUID readUuid(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     public static String fingerprint(BlockState state) {
@@ -171,12 +191,14 @@ public class ArmorIntegritySavedData extends SavedData {
 
     public static class Entry {
         public final String fingerprint;
+        public final UUID subLevelId;
         public double damage;
         public long lastTouched;
         public final List<ImpactMark> marks;
 
-        Entry(String fingerprint, double damage, long lastTouched, List<ImpactMark> marks) {
+        Entry(String fingerprint, UUID subLevelId, double damage, long lastTouched, List<ImpactMark> marks) {
             this.fingerprint = fingerprint;
+            this.subLevelId = subLevelId;
             this.damage = damage;
             this.lastTouched = lastTouched;
             this.marks = marks;
