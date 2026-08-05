@@ -32,6 +32,7 @@ AGENTS.md
 eclipse
 run
 run-data
+runs/
 
 # build and compile logs
 build-log*.txt

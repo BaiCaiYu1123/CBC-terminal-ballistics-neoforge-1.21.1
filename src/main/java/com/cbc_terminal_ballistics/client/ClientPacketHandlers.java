@@ -1,7 +1,6 @@
 package com.cbc_terminal_ballistics.client;
 
 import com.cbc_terminal_ballistics.debug.TBProjectileSlowdown;
-import com.cbc_terminal_ballistics.network.ClientboundArmorSparkPacket;
 import com.cbc_terminal_ballistics.network.ClientboundImpactMarksPacket;
 import com.cbc_terminal_ballistics.network.ClientboundInspectionSnapshotPacket;
 import com.cbc_terminal_ballistics.network.ClientboundIntegrityProgressPacket;
@@ -10,10 +9,6 @@ import com.cbc_terminal_ballistics.network.ClientboundSpallConePacket;
 import net.minecraft.client.Minecraft;
 
 public final class ClientPacketHandlers {
-    public static void handleArmorSparks(ClientboundArmorSparkPacket packet) {
-        ClientArmorSparkVisuals.accept(packet);
-    }
-
     public static void handleImpactMarks(ClientboundImpactMarksPacket packet) {
         if (Minecraft.getInstance().level != null) {
             ClientImpactMarks.accept(packet.pos(), packet.subLevelId(), packet.marks());

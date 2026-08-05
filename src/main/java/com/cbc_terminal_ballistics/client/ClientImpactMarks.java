@@ -112,9 +112,11 @@ public final class ClientImpactMarks {
             for (ImpactMark mark : entry.getValue().marks()) {
                 long age = now - mark.gameTime();
 
-                // Burn for 3 seconds (60 ticks).
-                // Only spawn on the entry HOLE, not EXIT_HOLE or STREAK.
-                if (age < 60 && mark.kind() == ImpactMarkKind.HOLE && mark.surface() == ImpactSurfaceType.METALLIC) {
+                // Match the upstream impact-hole effect: burn for 3 seconds (60 ticks)
+                // on the entry HOLE only. Do not require material classification here;
+                // addon armor and Sable copycats may otherwise be classified as GENERAL
+                // and silently lose the original FLAME + SMOKE effect.
+                if (age < 60 && mark.kind() == ImpactMarkKind.HOLE) {
 
                     // 1. Determine a scale multiplier based on the caliber
                     float scale = switch (mark.caliber()) {
@@ -138,11 +140,24 @@ public final class ClientImpactMarks {
                                 .add(localNormal.scale(0.05))
                                 .add(jitterX, jitterY, jitterZ);
 
-                        // --- VALKYRIEN SKIES COMPATIBILITY ---
-                        Vec3 worldPos = SableCompat.toWorldCoordinates(mc.level, localPos);
-                        Vec3 worldPos2 = SableCompat.toWorldCoordinates(mc.level, localPos.add(localNormal));
-                        Vec3 worldNormal = worldPos2.subtract(worldPos).normalize();
-                        // -------------------------------------
+                        // Use the same live Sable render pose as the impact decal.
+                        // Transform normals directly so pitch/roll cannot skew the
+                        // spark direction through two projected-position samples.
+                        Vec3 worldPos = localPos;
+                        Vec3 worldNormal = localNormal;
+                        if (isSableSubLevelMark(mc.level, pos)) {
+                            SableClientCompat.RenderTransform transform =
+                                    SableClientCompat.renderTransformWithSubLevel(mc.level, pos, Vec3.ZERO);
+                            if (transform != null) {
+                                worldPos = transform.position(localPos);
+                                worldNormal = transform.normal(localNormal).normalize();
+                            } else {
+                                // Keep position compatibility if the client render
+                                // pose is temporarily unavailable. A local normal is
+                                // safer than estimating one from projected positions.
+                                worldPos = SableCompat.toWorldCoordinates(mc.level, localPos);
+                            }
+                        }
 
                         // 4. Scale the velocity so big flames shoot further out into the air
                         mc.level.addParticle(net.minecraft.core.particles.ParticleTypes.FLAME,

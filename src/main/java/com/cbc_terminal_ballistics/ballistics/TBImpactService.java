@@ -4,13 +4,11 @@ import com.cbc_terminal_ballistics.CBCTerminalBallistics;
 import com.cbc_terminal_ballistics.armor.CopycatArmorLayerBlock;
 import com.cbc_terminal_ballistics.armor.FramedCollapsibleCopycatArmorBlock;
 import com.cbc_terminal_ballistics.config.TBConfig;
-import com.cbc_terminal_ballistics.compat.CBCNeoWarfareCompat;
 import com.cbc_terminal_ballistics.compat.TestLauncherProjectileCompat;
 import com.cbc_terminal_ballistics.data.CopycatMaterialResolver;
 import com.cbc_terminal_ballistics.data.MaterialManager;
 import com.cbc_terminal_ballistics.data.MaterialStats;
 import com.cbc_terminal_ballistics.debug.TBDebug;
-import com.cbc_terminal_ballistics.network.ClientboundArmorSparkPacket;
 import com.cbc_terminal_ballistics.network.ClientboundImpactMarksPacket;
 import com.cbc_terminal_ballistics.network.ClientboundIntegrityProgressPacket;
 import com.cbc_terminal_ballistics.network.ClientboundSpallConePacket;
@@ -88,6 +86,15 @@ public final class TBImpactService {
             boolean autocannon = caliber == TBCaliber.AUTOCANNON || caliber == TBCaliber.HEAVY_AUTOCANNON;
             boolean surfaceImpact = autocannon ? CBCReflect.lastPenetratedBlockIsAir(projectile) : CBCReflect.canHitSurface(projectile);
 
+            // Direct shell hits detonate stored TNT and placed high-explosive munitions before
+            // armor wear, impact marks, or temporary block passage can touch the removed block.
+            if (level instanceof ServerLevel server && triggerExplosiveBlockHit(server, pos, state, hit.getDirection())) {
+                CBCReflect.setProjectileMass(projectile, 0.0D);
+                Object stopped = CBCReflect.newImpactResult("STOP", true);
+                CBCReflect.callOnImpact(projectile, hit, stopped, projectileContext);
+                return stopped;
+            }
+
             // Penetration/no-penetration intentionally follows CBC's original basis for now:
             // block is perforated if projectile_mass * incident_velocity * velocity_bonus >= CBC block toughness. (default CBC penetration)
             // This means datapacks that tune CBC "durability_mass" on each munition directly control penetration.
@@ -133,13 +140,11 @@ public final class TBImpactService {
                 double bounceBonus = autocannon ? 1.0D : Math.max(1.0D - hardnessPenaltyRaw, 0.0D);
                 bounceChance = Math.max(CBCReflect.baseProjectileBounceChance(), 1.0D - incidence / deflection) * bounceBonus;
             }
-            boolean forcedApfsdsRicochet = CBCNeoWarfareCompat.shouldForceApfsdsRicochet(projectile, incidence);
-            if (surfaceImpact && CBCReflect.projectilesCanBounce() && (forcedApfsdsRicochet || level.random.nextDouble() < bounceChance)) {
+            if (surfaceImpact && CBCReflect.projectilesCanBounce() && level.random.nextDouble() < bounceChance) {
                 if (!level.isClientSide) {
                     Vec3 effectNormal = curVel.subtract(normal.scale(normal.dot(curVel) * 1.7D));
                     CBCReflect.addBlockHitEffect(projectileContext, projectile, level, state, pos, hit.getLocation(), effectNormal, true);
                     if (level instanceof ServerLevel server) {
-                        sendArmorSparks(server, pos, hit.getLocation(), effectNormal, armorToughness, caliber, velMag);
                         playHardBlockImpactSound(server, pos, armorToughness, caliber, velMag);
                         addImpactMark(server, pos, state, hit, ImpactMarkKind.STREAK, caliber, impactSurface, curVel);
                     }
@@ -179,7 +184,6 @@ public final class TBImpactService {
                     state.onProjectileHit(level, state, hit, p);
                 }
                 CBCReflect.addBlockHitEffect(projectileContext, projectile, level, state, pos, hit.getLocation(), curVel.reverse(), false);
-                sendArmorSparks(server, pos, hit.getLocation(), curVel.reverse().add(normal.scale(velMag * 0.35D)), armorToughness, caliber, velMag);
                 playHardBlockImpactSound(server, pos, armorToughness, caliber, velMag);
                 ArmorIntegritySavedData data = ArmorIntegritySavedData.get(server);
                 data.addMark(server, pos, state, mark(server, pos, hit, markKind, caliber, impactSurface, markKind == ImpactMarkKind.STREAK ? ricochetMarkRotation(server, pos, hit, curVel) : 0.0F));
@@ -447,31 +451,6 @@ public final class TBImpactService {
         }
     }
 
-    private static void sendArmorSparks(ServerLevel level, BlockPos pos, Vec3 origin, Vec3 direction,
-                                        double armorToughness, TBCaliber caliber, double velocity) {
-        if (armorToughness < HARD_BLOCK_IMPACT_SOUND_TOUGHNESS) return;
-        if (direction.lengthSqr() < 1.0e-6D) direction = new Vec3(0, 1, 0);
-
-        float intensity = (float) Mth.clamp(0.75D + caliber.ordinal() * 0.16D + armorToughness / 45.0D + velocity * 0.003D, 0.70D, 2.50D);
-        long seed = 0xcbc5a11d5f4a7dL;
-        seed = mixSeed(seed, level.getGameTime());
-        seed = mixSeed(seed, pos.getX());
-        seed = mixSeed(seed, pos.getY());
-        seed = mixSeed(seed, pos.getZ());
-        seed = mixSeed(seed, Double.doubleToLongBits(origin.x));
-        seed = mixSeed(seed, Double.doubleToLongBits(origin.y));
-        seed = mixSeed(seed, Double.doubleToLongBits(origin.z));
-
-        ClientboundArmorSparkPacket packet = new ClientboundArmorSparkPacket(pos, origin, direction.normalize(), seed, intensity, caliber);
-        Vec3 worldOrigin = SableCompat.toWorldCoordinates(level, origin);
-        List<ServerPlayer> players = getRelevantPlayers(level, pos);
-        for (ServerPlayer player : players) {
-            if (worldOrigin.distanceToSqr(player.position()) <= 128 * 128) {
-                PacketDistributor.sendToPlayer(player, packet);
-            }
-        }
-    }
-
     private static long spallVisualSeed(ServerLevel level, Entity projectile, Vec3 origin, Vec3 dir, int fragments) {
         long seed = 0xcbc7b41115f5a11L;
         seed = mixSeed(seed, level.getGameTime());
@@ -575,7 +554,7 @@ public final class TBImpactService {
                 BlockPos bp = bhr.getBlockPos();
                 BlockState st = level.getBlockState(bp);
                 if (st.isAir()) continue;
-                if (triggerExplosiveSpallHit(level, bp, st, bhr.getDirection())) continue;
+                if (triggerExplosiveBlockHit(level, bp, st, bhr.getDirection())) continue;
                 float speed = st.getDestroySpeed(level, bp);
                 if (speed < 0) continue;
                 double localArmor = localEffectiveToughness(level, st, bp);
@@ -623,7 +602,7 @@ public final class TBImpactService {
         return fragments;
     }
 
-    private static boolean triggerExplosiveSpallHit(ServerLevel level, BlockPos pos, BlockState state, Direction hitFace) {
+    private static boolean triggerExplosiveBlockHit(ServerLevel level, BlockPos pos, BlockState state, Direction hitFace) {
         if (state.is(Blocks.TNT)) {
             Vec3 center = Vec3.atCenterOf(pos);
             level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
@@ -658,6 +637,13 @@ public final class TBImpactService {
         }
         return path.equals("he_shell")
                 || path.contains("he_shell")
+                || path.startsWith("he_")
+                || path.contains("_he_")
+                || path.contains("hefrag")
+                || path.contains("hehc")
+                || path.contains("aphe")
+                || path.contains("heat")
+                || path.contains("heap")
                 || path.contains("high_explosive")
                 || path.contains("high_explosive_shell");
     }

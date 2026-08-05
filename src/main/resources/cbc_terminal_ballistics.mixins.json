@@ -10,7 +10,6 @@
     "AutocannonProjectileMixin",
     "BlockArmorInspectionToolItemMixin",
     "CBCMWMediumCannonProjectileMixin",
-    "CBCMWAPFSDSProjectileMixin",
     "CBCMWSmokeDischargerProjectileMixin",
     "CBCMSDualCannonProjectileMixin",
     "CBCMSFuzedDualCannonProjectileMixin",
