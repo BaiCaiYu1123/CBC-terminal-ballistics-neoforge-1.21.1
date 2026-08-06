@@ -1,4 +1,4 @@
-CBC: Terminal Ballistics (NeoForge 1.21.1 Port)
+﻿CBC: Terminal Ballistics (NeoForge 1.21.1 Port)
 ===============================================
 
 CBC: Terminal Ballistics is a Create: Big Cannons addon that changes how blocks
@@ -96,7 +96,7 @@ Credits
 Original Author: MegiTicky
   https://github.com/MegiTicky/CBC-terminal-ballistics
 
-Port & additions: Erika
+Port & additions: BaiCaiYu
 
 CBC: Terminal Ballistics is built as an addon for Create: Big Cannons.
 Portions of the gameplay logic were developed with reference to the
